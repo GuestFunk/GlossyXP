@@ -1,0 +1,2412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Glossy XP — Simulator</title>
+  <style>
+    /* Basic reset */
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body,#desktop{height:100%}
+    body{
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      background:#000;
+    }
+
+    :root{
+      /* Default wallpaper set to Windows XP "Bliss" */
+      --wallpaper: url("https://upload.wikimedia.org/wikipedia/en/5/5f/Bliss.jpg");
+      --taskbar-height: 44px;
+      --taskbar-padding-vertical: 6px;
+      --taskbar-radius: 8px;
+    }
+
+    /* Boot overlay */
+    #boot-overlay{
+      position:fixed; inset:0;
+      background: radial-gradient(ellipse at center, #0b1b36 0%, #031123 60%, #000 100%);
+      color:#dfefff;
+      display:flex; align-items:center; justify-content:center;
+      z-index:9999; opacity:0; pointer-events:none; transition:opacity 260ms ease;
+      -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+      font-family:"Segoe UI", Tahoma, Arial, sans-serif;
+    }
+    #boot-overlay.visible{ opacity:1; pointer-events:auto; }
+    .boot-center{ text-align:center; width:560px; max-width:92%; }
+    #boot-logo{ width:280px; max-width:70%; margin-bottom:18px; filter: drop-shadow(0 6px 18px rgba(0,0,0,0.7)); }
+    .boot-text{ font-size:18px; margin-bottom:14px; color:#d0e8ff; text-shadow: 0 1px 0 rgba(0,0,0,0.5); }
+    .boot-progress{ height:14px; background:rgba(255,255,255,0.07); border-radius:8px; overflow:hidden; margin:0 auto 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.02); }
+    .boot-progress-bar{ height:100%; width:0%; background: linear-gradient(90deg, #66a7ff, #7ad6ff); transition:width 200ms linear; box-shadow:0 1px 6px rgba(0,0,0,0.35); }
+    .boot-tip{ font-size:12px; color:rgba(255,255,255,0.62); margin-top:8px; }
+
+    /* BIOS overlay (text-mode simulation) */
+    #bios-overlay{
+      position:fixed; inset:0; display:none; z-index:10001;
+      background:#000; color:#0f9f0f; font-family:monospace; font-size:13px; padding:18px; overflow:auto;
+    }
+    #bios-screen{
+      white-space:pre-wrap; line-height:1.35; max-width:1100px; margin:18px auto;
+    }
+    #bios-controls{ position:fixed; right:20px; top:18px; z-index:10002; display:flex; gap:8px; }
+    #bios-controls button{ padding:6px 8px; border-radius:6px; background:#111; color:#0f9f0f; border:1px solid rgba(0,255,0,0.06); cursor:pointer; }
+
+    /* Desktop hidden until boot finishes */
+    .desktop.hidden { display: none; }
+
+    /* Desktop */
+    .desktop{
+      position:relative;
+      height:100%;
+      width:100%;
+      background-image: var(--wallpaper);
+      background-size: cover;
+      background-position: center;
+      overflow:hidden;
+      user-select:none;
+    }
+    .desktop::after{
+      content:"";
+      position:absolute; inset:0;
+      background: linear-gradient(rgba(255,255,255,0.02), rgba(255,255,255,0.02));
+      pointer-events:none;
+    }
+
+    /* Desktop icons area */
+    .desktop-icons{
+      position: absolute;
+      left: 18px;
+      top: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 20;
+      pointer-events: none; /* children handle events */
+    }
+    .desktop-icon{
+      width:88px;
+      text-align:center;
+      color:#eaf6ff;
+      font-weight:800;
+      pointer-events: auto;
+      cursor:default;
+      user-select:none;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:8px;
+    }
+    .desktop-icon .ico-wrap{
+      width:72px; height:72px; border-radius:10px; background:linear-gradient(#ffffff,#eaf3ff);
+      display:flex; align-items:center; justify-content:center; font-size:28px; color:#063a6a;
+      box-shadow: 0 8px 20px rgba(2,30,60,0.22);
+      border:1px solid rgba(0,0,0,0.06);
+    }
+    .desktop-icon .label{
+      font-size:13px; color:#fff; text-shadow:0 1px 0 rgba(0,0,0,0.4);
+      max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    .desktop-icon:hover .ico-wrap{ transform: translateY(-4px); transition: transform 160ms; }
+
+    /* Desktop note */
+    .desktop-note {
+      position: fixed;
+      left: 50%;
+      top: 18%;
+      transform: translateX(-50%);
+      max-width: min(760px, 92%);
+      width: 640px;
+      background: linear-gradient(#fff,#eef7ff);
+      border-radius: 12px;
+      border: 3px solid rgba(56,122,204,0.22);
+      box-shadow: 0 20px 50px rgba(13,70,150,0.3);
+      padding: 18px;
+      z-index: 20000;
+      color: #053a6b;
+      font-weight: 700;
+      display:flex;
+      gap:12px;
+      align-items:flex-start;
+    }
+    .desktop-note .note-text { flex:1; font-weight:700; color:#073764; font-size:15px; line-height:1.3; }
+    .desktop-note .note-actions { display:flex; flex-direction:column; gap:8px; align-items:flex-end; }
+    .desktop-note .btn { background: linear-gradient(#f0f8ff,#e4f2ff); border-radius:8px; padding:8px 12px; border:1px solid rgba(0,0,0,0.06); cursor:pointer; font-weight:800; color:#114b85; }
+
+    /* Context menu */
+    .context-menu{
+      position:absolute;
+      min-width:220px;
+      background: linear-gradient(#ffffff,#eaf3ff);
+      border-radius:12px;
+      border: 3px solid rgba(56,122,204,0.28);
+      box-shadow: 0 10px 30px rgba(13,70,150,0.35), inset 0 2px 0 rgba(255,255,255,0.6);
+      padding:6px;
+      z-index:60;
+      display:none;
+    }
+    .context-menu ul{list-style:none}
+    .context-menu li{
+      padding:12px 18px; font-weight:700; color:#0a4b8a; font-size:15px; cursor:pointer; border-radius:8px;
+    }
+    .context-menu li:hover{ background: linear-gradient(#e8f4ff,#dceefe); color:#073764; }
+
+    /* Taskbar (compact) */
+    .taskbar{
+      position:fixed;
+      left:8px; right:8px; bottom:8px;
+      height: var(--taskbar-height);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding: var(--taskbar-padding-vertical) 10px;
+      border-radius: var(--taskbar-radius);
+      background: linear-gradient(#8ec3f6, #2f73b7);
+      box-shadow: 0 -6px 18px rgba(0,0,0,0.45), inset 0 6px 10px rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      z-index:30;
+      backdrop-filter: blur(4px);
+      gap:8px;
+    }
+    .taskbar-left{ display:flex; align-items:center; gap:10px; }
+    .start-button{
+      display:flex; align-items:center; gap:8px;
+      background: linear-gradient(#9ff58b, #2fb53a);
+      padding:6px 12px; border-radius:22px;
+      border: 2px solid rgba(255,255,255,0.30);
+      box-shadow: inset 0 2px 4px rgba(255,255,255,0.35), 0 3px 8px rgba(0,0,0,0.28);
+      cursor:pointer; color:white; font-weight:800; font-size:14px; text-transform:lowercase;
+      height: calc(var(--taskbar-height) - 8px);
+    }
+    .taskbar-center{flex:1; display:flex; justify-content:center; gap:6px; align-items:center; padding:4px 8px;}
+    .taskbar-right{ display:flex; align-items:center; gap:8px; }
+
+    .taskbar-icon{
+      min-width:72px; display:flex; align-items:center; gap:6px; padding:4px 8px; border-radius:8px;
+      background:linear-gradient(#cfe9ff,#9fcfff); color:#063a6a; font-weight:800; cursor:pointer; border:1px solid rgba(0,0,0,0.06);
+      font-size:13px; height: calc(var(--taskbar-height) - 10px);
+    }
+    .taskbar-icon.minimized{ opacity:0.65; filter:grayscale(0.08) }
+
+    .clock{
+      min-width:78px; text-align:center; padding:6px 10px; border-radius:14px;
+      background: linear-gradient(#e6f3ff,#c7e7ff);
+      font-weight:800; color:#003b6d; box-shadow: inset 0 1px 0 rgba(255,255,255,0.5); font-size:13px;
+      height: calc(var(--taskbar-height) - 10px);
+      display:flex; align-items:center; justify-content:center;
+    }
+
+    /* Start menu — classic XP-like, two-column */
+    .start-menu{
+      position:fixed;
+      left:12px;
+      bottom: calc(var(--taskbar-height) + 20px);
+      width:420px;
+      max-width:86vw;
+      background: linear-gradient(#ffffff,#eaf3ff);
+      border-radius:14px;
+      border: 3px solid rgba(56,122,204,0.28);
+      box-shadow: 0 18px 40px rgba(13,70,150,0.35), inset 0 2px 0 rgba(255,255,255,0.6);
+      padding:8px;
+      z-index:45;
+      display:none;
+      transform-origin:left bottom;
+    }
+    .start-top{
+      display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; background: linear-gradient(#e8f6ff,#f7fbff);
+      margin-bottom:8px;
+    }
+    .start-brand{
+      width:48px; height:48px; border-radius:8px; background:linear-gradient(#9fd6ff,#ffffff); display:flex; align-items:center; justify-content:center; font-weight:900; color:#0a67b0; font-size:14px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    }
+
+    .start-body{ display:flex; gap:10px; }
+    .start-left{ width:60%; background: linear-gradient(#f8fbff,#eef7ff); padding:8px; border-radius:8px; }
+    .start-right{ width:40%; padding:8px; border-radius:8px; background: linear-gradient(#f8fbff,#eef7ff); }
+
+    .start-left .section-title{ font-weight:800; color:#073764; margin-bottom:6px }
+    .pinned{ display:flex; gap:8px; flex-wrap:wrap; }
+    .pin{ width: 120px; background:linear-gradient(#ffffff,#eaf3ff); border-radius:6px; padding:8px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.6); display:flex; gap:8px; align-items:center; cursor:pointer; font-weight:700; color:#114b85; }
+    .pin .ico{ font-size:20px }
+
+    .all-apps{ margin-top:8px; max-height:160px; overflow:auto; }
+    .app-row{ padding:6px 8px; border-radius:6px; display:flex; gap:8px; align-items:center; cursor:pointer; }
+    .app-row:hover{ background: linear-gradient(#e8f4ff,#dceefe); }
+
+    .start-right .entry{ display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; font-weight:800; color:#114b85; }
+    .start-right .entry:hover{ background:linear-gradient(#e8f4ff,#dceefe); }
+
+    .start-footer{ margin-top:10px; display:flex; gap:8px; align-items:center; justify-content:space-between; }
+    .shutdown-btn{ background:linear-gradient(#ffefef,#ffdcdc); padding:8px 14px; border-radius:10px; color:#7a1f1f; font-weight:900; border:1px solid rgba(0,0,0,0.06); cursor:pointer; }
+
+    /* Windows */
+    .window{
+      position:fixed;
+      width:520px;
+      height:420px;
+      background: linear-gradient(#ffffff,#eef7ff);
+      border-radius:10px;
+      border: 2px solid rgba(56,122,204,0.16);
+      box-shadow: 0 18px 50px rgba(6,56,110,0.35);
+      overflow:hidden;
+      z-index:50;
+      display:flex;
+      flex-direction:column;
+      transform-origin:center;
+    }
+    .window.maximized{ border-radius:6px; }
+    .titlebar{
+      height:40px;
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:6px 10px;
+      background: linear-gradient(180deg,#e6f3ff,#cfe8ff);
+      border-bottom:1px solid rgba(0,0,0,0.06);
+      cursor:grab;
+      user-select:none;
+    }
+    .titlebar .title{ font-weight:800; color:#063a6a; flex:1; }
+    .tbtn{
+      width:36px; height:28px; display:inline-flex; align-items:center; justify-content:center;
+      border-radius:6px; background:linear-gradient(#fff,#e6f3ff); border:1px solid rgba(0,0,0,0.06);
+      cursor:pointer; margin-left:6px; font-weight:800; color:#073764;
+    }
+    .content{ padding:12px; background: linear-gradient(#fbfeff,#eef8ff); flex:1; overflow:auto; }
+
+    /* App Market visuals */
+    .list{ display:flex; flex-direction:column; gap:8px; }
+    .app-card{
+      display:flex; gap:10px; align-items:center; padding:10px; background:linear-gradient(#f8fbff,#e7f4ff); border-radius:8px;
+      border:1px solid rgba(0,0,0,0.04);
+    }
+    .app-card .icon{ width:44px; height:44px; border-radius:8px; background:linear-gradient(#eaf4ff,#d7ecff); display:flex; align-items:center; justify-content:center; font-weight:800; color:#0a67b0; }
+
+    /* Assistive Touch (floating, movable) */
+    .assistive-wrap {
+      position:fixed;
+      z-index:12000;
+      touch-action:none;
+      -webkit-user-select:none;
+      user-select:none;
+    }
+    .assistive {
+      width:56px;
+      height:56px;
+      border-radius:50%;
+      background: linear-gradient(180deg,#ffffff,#dfeeff);
+      box-shadow: 0 10px 30px rgba(6,30,60,0.35);
+      display:flex; align-items:center; justify-content:center;
+      cursor:grab;
+      border: 2px solid rgba(0,0,0,0.06);
+    }
+    .assistive:active { cursor:grabbing; }
+    .assistive .dot { width:14px; height:14px; border-radius:50%; background:linear-gradient(#66a7ff,#7ad6ff); box-shadow:0 3px 8px rgba(0,0,0,0.25); }
+    .assistive-menu {
+      position: absolute;
+      right: 68px;
+      bottom: 0;
+      transform: translateY(8px);
+      min-width:180px;
+      background: linear-gradient(#ffffff,#eef7ff);
+      border-radius:10px;
+      padding:8px;
+      box-shadow: 0 8px 24px rgba(6,30,60,0.35);
+      border: 1px solid rgba(0,0,0,0.06);
+      display:none;
+      flex-direction:column;
+      gap:6px;
+    }
+    .assistive-menu.visible { display:flex; }
+    .assistive-menu button {
+      background: linear-gradient(#f8fbff,#eaf6ff);
+      border-radius:8px;
+      border:1px solid rgba(0,0,0,0.04);
+      padding:8px 10px;
+      font-weight:800; color:#114b85; cursor:pointer;
+      text-align:left;
+    }
+
+    /* Small thumbnail styles used by wallpaper switcher */
+    .wp-presets { display:flex; gap:8px; margin:8px 0; flex-wrap:wrap; }
+    .wp-thumb { width:88px; height:56px; background-size:cover; background-position:center; border-radius:6px; cursor:pointer; border:2px solid rgba(0,0,0,0.06); box-shadow: 0 6px 18px rgba(2,30,60,0.12); }
+    .wp-thumb.selected { outline: 3px solid rgba(102,167,255,0.8); }
+
+    /* Music player styles */
+    .music-playlist { display:flex; flex-direction:column; gap:8px; max-height:260px; overflow:auto; margin-top:8px; }
+    .music-track { display:flex; gap:8px; align-items:center; padding:8px; border-radius:8px; background:linear-gradient(#fff,#f0f8ff); border:1px solid rgba(0,0,0,0.04); cursor:pointer; }
+    .music-track.playing { outline: 2px solid rgba(102,167,255,0.8); }
+
+    /* Computer app styles */
+    .computer-grid { display:flex; gap:12px; align-items:flex-start; }
+    .comp-panel { flex:1; background:linear-gradient(#fff,#f8fdff); border-radius:10px; padding:12px; border:1px solid rgba(0,0,0,0.04); }
+    .drive { padding:10px; background:linear-gradient(#eef8ff,#e7f3ff); border-radius:8px; margin-bottom:8px; }
+    .uploaded-list { display:flex; flex-direction:column; gap:8px; max-height:260px; overflow:auto; margin-top:8px; }
+    .uploaded-item { display:flex; justify-content:space-between; gap:8px; padding:8px; border-radius:8px; background:#f8fbff; border:1px solid rgba(0,0,0,0.04); }
+
+    @media (max-width:520px){
+      .start-menu{ left:8px; right:8px; width:auto; bottom: calc(var(--taskbar-height) + 28px); }
+      .pin{ width: 46% }
+      .assistive-wrap { }
+      .assistive-menu { right:70px; min-width:150px; }
+    }
+
+    /* white cursor (custom SVG). Applied when Computer app launches */
+    .white-cursor, .white-cursor * {
+      cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'> <path fill='%23ffffff' d='M2 0 L24 18 L16 20 L22 30 L10 20 L2 24 Z' /></svg>") 0 0, auto !important;
+    }
+
+    /* Lock screen styles */
+    #lock-screen{
+      position:fixed; inset:0; display:none; z-index:30000;
+      background: linear-gradient(rgba(2,6,23,0.6), rgba(2,6,23,0.6));
+      backdrop-filter: blur(6px) saturate(1.1);
+      color: #eaf6ff;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      align-items:center; justify-content:center;
+    }
+    #lock-screen.visible { display:flex; }
+    .lock-card{
+      width:420px; max-width:92%; background: linear-gradient(180deg,#07182b,#04263f);
+      border-radius:14px; padding:22px; box-shadow: 0 30px 80px rgba(2,12,30,0.7); border:1px solid rgba(255,255,255,0.04);
+      display:flex; flex-direction:column; gap:12px; align-items:center;
+    }
+    .lock-row {
+      display:flex; align-items:center; gap:12px; width:100%; justify-content:center;
+    }
+    .smiley-buddy {
+      width:72px; height:72px; border-radius:50%; background: radial-gradient(#fff9c8,#ffd76b);
+      display:flex; align-items:center; justify-content:center; font-size:36px; box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+      border:3px solid rgba(255,255,255,0.06);
+    }
+    .lock-time{ font-size:48px; font-weight:900; color:#e8f6ff; letter-spacing:1px; }
+    .lock-date{ font-size:14px; color:rgba(232,246,255,0.85); }
+    .lock-input-wrap{ display:flex; gap:8px; width:100%; align-items:center; margin-top:6px; }
+    .lock-input{
+      flex:1; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(#031b2b, #042b3f); color:#dff4ff; font-weight:700; font-size:16px;
+    }
+    .lock-btn{ padding:10px 12px; border-radius:10px; background:linear-gradient(#6fbfef,#3a8adf); color:white; font-weight:900; border:1px solid rgba(0,0,0,0.08); cursor:pointer; }
+    .lock-hint{ font-size:12px; color:rgba(255,255,255,0.6); margin-top:6px; }
+    .lock-shake { animation: shake 360ms; }
+    @keyframes shake {
+      0%{ transform: translateX(0) }
+      25%{ transform: translateX(-8px) }
+      50%{ transform: translateX(8px) }
+      75%{ transform: translateX(-6px) }
+      100%{ transform: translateX(0) }
+    }
+
+    /* Weather small badge */
+    .weather-badge { display:flex; gap:8px; align-items:center; font-weight:900; color:#073764; }
+    .weather-icon { font-size:20px; }
+
+  </style>
+</head>
+<body>
+  <!-- Boot overlay (runs on first load and on simulated restart) -->
+  <div id="boot-overlay" aria-hidden="true" role="dialog" aria-label="Boot screen">
+    <div class="boot-center" role="document">
+      <svg id="boot-logo" viewBox="0 0 220 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="g1" x1="0" x2="1"><stop offset="0" stop-color="#f9c74f"/><stop offset="1" stop-color="#f8961e"/></linearGradient>
+          <linearGradient id="g2" x1="0" x2="1"><stop offset="0" stop-color="#90be6d"/><stop offset="1" stop-color="#43aa8b"/></linearGradient>
+          <linearGradient id="g3" x1="0" x2="1"><stop offset="0" stop-color="#4d86ff"/><stop offset="1" stop-color="#66a7ff"/></linearGradient>
+          <linearGradient id="g4" x1="0" x2="1"><stop offset="0" stop-color="#aab3ff"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient>
+          <filter id="s" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.45"/></filter>
+        </defs>
+        <rect rx="12" ry="12" width="220" height="120" fill="rgba(255,255,255,0.02)"/>
+        <g transform="translate(10,10)" filter="url(#s)">
+          <rect x="0" y="0" width="100" height="50" rx="6" fill="url(#g1)"/>
+          <rect x="110" y="0" width="100" height="50" rx="6" fill="url(#g2)"/>
+          <rect x="0" y="60" width="100" height="50" rx="6" fill="url(#g3)"/>
+          <rect x="110" y="60" width="100" height="50" rx="6" fill="url(#g4)"/>
+        </g>
+      </svg>
+
+      <div class="boot-text" id="boot-text">Starting Glossy XP</div>
+
+      <div class="boot-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="boot-progress-bar" id="boot-bar"></div>
+      </div>
+
+      <div class="boot-tip">Click or press any key to skip</div>
+
+      <div style="margin-top:12px;">
+        <button id="biosBtn" class="tbtn" aria-label="Open BIOS">BIOS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BIOS overlay -->
+  <div id="bios-overlay" aria-hidden="true" role="dialog" aria-label="BIOS">
+    <div id="bios-controls">
+      <button id="bios-close">Exit BIOS</button>
+      <button id="bios-run">Run POST</button>
+    </div>
+    <div id="bios-screen" aria-live="polite"></div>
+  </div>
+
+  <!-- Lock screen overlay -->
+  <div id="lock-screen" role="dialog" aria-label="Lock screen" aria-hidden="true">
+    <div class="lock-card" id="lockCard" aria-live="polite">
+      <div class="lock-row">
+        <div class="smiley-buddy" id="smileyBuddy" title="Smilly Buddy">😊</div>
+        <div style="display:flex;flex-direction:column;align-items:center;">
+          <div class="lock-time" id="lockTime">00:00</div>
+          <div class="lock-date" id="lockDate">January 1, 1970</div>
+          <div style="margin-top:6px;color:rgba(232,246,255,0.85);font-weight:800">Signed in: <span id="lockUser">GlossyXP</span></div>
+        </div>
+      </div>
+
+      <div class="lock-input-wrap">
+        <input id="lockInput" class="lock-input" type="password" placeholder="Press Unlock (no password required)" aria-label="PIN input" />
+        <button id="lockUnlockBtn" class="lock-btn" aria-label="Unlock">Unlock</button>
+      </div>
+
+      <div class="lock-hint">Tip: No password required — press Unlock to continue (LOCK_PIN is empty)</div>
+    </div>
+  </div>
+
+  <div class="desktop hidden" id="desktop" tabindex="0" aria-label="Desktop">
+    <!-- Desktop icons container -->
+    <div class="desktop-icons" id="desktopIcons" aria-hidden="false" role="list"></div>
+
+    <!-- Context menu -->
+    <div class="context-menu" id="contextMenu" role="menu" aria-hidden="true">
+      <ul>
+        <li id="ctxRefresh">Refresh</li>
+        <li id="ctxNewNotepad">New Notepad ▸</li>
+        <li id="ctxAppMarket">App Market</li>
+        <li id="ctxUpload">Upload from computer</li>
+        <li id="ctxProperties">Properties</li>
+      </ul>
+    </div>
+
+    <!-- Start menu -->
+    <div class="start-menu" id="startMenu" aria-hidden="true" role="menu">
+      <div class="start-top">
+        <div class="start-brand">Glossy<br>XP</div>
+        <div style="flex:1">
+          <div style="font-weight:900;color:#073764;font-size:16px">Glossy XP</div>
+          <div style="color:#2f6c9c;font-weight:700;font-size:12px">A glossy retro simulator</div>
+        </div>
+      </div>
+
+      <div class="start-body">
+        <div class="start-left">
+          <div class="section-title">Pinned</div>
+          <div class="pinned" id="pinnedArea"></div>
+
+          <div class="section-title" style="margin-top:8px">All Programs</div>
+          <div class="all-apps" id="allAppsList"></div>
+        </div>
+
+        <div class="start-right">
+          <div class="entry" data-action="documents">📁 My Documents</div>
+          <div class="entry" data-action="pictures">🖼️ My Pictures</div>
+          <div class="entry" data-action="control">⚙️ Control Panel</div>
+          <div class="entry" data-action="appmarket">🏬 App Market</div>
+          <div class="entry" data-action="camera">📷 Camera</div>
+          <div class="entry" data-action="lock">🔒 Lock</div>
+
+          <div class="start-footer">
+            <div style="font-size:12px;color:#2f6c9c;font-weight:800">Signed in: Glossy XP</div>
+            <button class="shutdown-btn" id="shutdownBtn">Shut down</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Taskbar -->
+    <div class="taskbar" id="taskbar" aria-hidden="false">
+      <div class="taskbar-left">
+        <button class="start-button" id="startButton" aria-label="Start">start</button>
+      </div>
+
+      <div class="taskbar-center" id="taskbarCenter" aria-hidden="false"></div>
+
+      <div class="taskbar-right">
+        <div class="tray-icons" aria-hidden="true">
+          <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='22'><rect width='28' height='22' rx='4' fill='%23ffffff' opacity='0.06'/></svg>" alt="" />
+        </div>
+        <div class="clock" id="clock" aria-live="polite">00:00 AM</div>
+      </div>
+    </div>
+
+    <!-- Windows container -->
+    <div id="windowsRoot" aria-hidden="false"></div>
+  </div>
+
+  <!-- Assistive touch UI root (we create a movable wrapper inside it) -->
+  <div id="assistiveRoot" aria-hidden="true"></div>
+
+  <!-- Hidden file input used by "Upload from computer" (accept HTML and audio) -->
+  <input id="filePicker" type="file" style="display:none" multiple accept=".html,.htm,audio/*,image/*,text/*" />
+
+  <script>
+  /*************************************************************************
+   * Glossy XP — Extended (modified)
+   * Additions in this version:
+   * - Weather app (uses Open-Meteo free API) added to catalog
+   * - Desktop icon for Weather shown in desktop icons area
+   * - Weather app tries geolocation; provides manual lat/lon fallback
+   *************************************************************************/
+
+  // Current user (displayed in Computer app and on lock screen)
+  const CURRENT_USER = 'GlossyXP';
+
+  // Lock screen PIN (empty string means no password required)
+  const LOCK_PIN = '';
+
+  // in-memory uploaded files catalog for Computer app (blob URLs stored here while page is open)
+  const uploadedFiles = []; // entries: { name, type, url, kind: 'html'|'audio'|'image'|'text'|'other' }
+
+  /* ------------------------------
+     Boot controller (single-file, no external assets)
+     Supports pause/resume for BIOS screen
+     ------------------------------ */
+  (function () {
+    const overlay = document.getElementById('boot-overlay');
+    const progressBar = document.getElementById('boot-bar');
+    const bootTextEl = document.getElementById('boot-text');
+    const desktop = document.getElementById('desktop');
+    const biosBtn = document.getElementById('biosBtn');
+
+    let running = false, startTime = 0, durationMs = 5000, rafId = null, onFinishCb = null;
+    let audioCtx = null;
+    let pausedElapsed = 0; // ms elapsed when paused
+
+    function ensureAudio() {
+      if (!audioCtx) {
+        try {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+          audioCtx = null;
+        }
+      }
+      return !!audioCtx;
+    }
+
+    function playChime() {
+      if (!ensureAudio()) return;
+      const ctx = audioCtx;
+      const now = ctx.currentTime;
+      const master = ctx.createGain();
+      master.gain.value = 0.0001;
+      master.connect(ctx.destination);
+      master.gain.linearRampToValueAtTime(0.9, now + 0.01);
+
+      const seq = [
+        [880, 0.22, 0.00],
+        [660, 0.28, 0.12],
+        [1320, 0.18, 0.30]
+      ];
+      seq.forEach(([freq, len, offset]) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.value = 0;
+        o.connect(g); g.connect(master);
+        o.start(now + offset);
+        g.gain.setValueAtTime(0, now + offset);
+        g.gain.linearRampToValueAtTime(0.28, now + offset + 0.008);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + offset + len);
+        o.stop(now + offset + len + 0.02);
+      });
+      master.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+    }
+
+    function animate() {
+      const now = performance.now();
+      const elapsed = Math.min(now - startTime, durationMs);
+      const pct = durationMs ? (elapsed / durationMs) * 100 : 100;
+      progressBar.style.width = pct + '%';
+      progressBar.parentElement.setAttribute('aria-valuenow', String(Math.round(pct)));
+      if (elapsed >= durationMs) {
+        stop(true);
+        return;
+      }
+      rafId = requestAnimationFrame(animate);
+    }
+
+    function startBoot(options = {}) {
+      if (running) return;
+      durationMs = typeof options.duration === 'number' ? options.duration : 5000;
+      onFinishCb = typeof options.onFinish === 'function' ? options.onFinish : null;
+      bootTextEl.textContent = options.bootText || 'Starting Glossy XP';
+
+      overlay.classList.add('visible');
+      progressBar.style.width = '0%';
+      running = true;
+      startTime = performance.now() - (pausedElapsed || 0);
+
+      if (options.playSound !== false) {
+        if (ensureAudio()) {
+          try { playChime(); } catch (e) { /* ignore */ }
+        }
+      }
+
+      rafId = requestAnimationFrame(animate);
+
+      const skip = () => { stop(true); };
+      window.addEventListener('keydown', skip, { once: true });
+      overlay.addEventListener('click', skip, { once: true });
+
+      overlay.setAttribute('aria-hidden','false');
+    }
+
+    function pauseBoot() {
+      if (!running) return;
+      pausedElapsed = performance.now() - startTime;
+      running = false;
+      cancelAnimationFrame(rafId);
+    }
+
+    function resumeBoot() {
+      if (running) return;
+      running = true;
+      startTime = performance.now() - (pausedElapsed || 0);
+      rafId = requestAnimationFrame(animate);
+    }
+
+    function stop(finished = false) {
+      if (!running && !finished) return;
+      running = false;
+      cancelAnimationFrame(rafId);
+      overlay.classList.remove('visible');
+      overlay.setAttribute('aria-hidden','true');
+      progressBar.style.width = '100%';
+      pausedElapsed = 0;
+      if (finished) {
+        // default behavior: unhide desktop and run onFinish callback
+        desktop.classList.remove('hidden');
+        if (onFinishCb) {
+          try { onFinishCb(); } catch (e) { console.error(e); }
+        }
+      }
+    }
+
+    // BIOS button wiring
+    biosBtn.addEventListener('click', () => {
+      // Pause boot progress, show BIOS overlay
+      pauseBoot();
+      showBios();
+    });
+
+    // BIOS overlay handling (defined below in global scope)
+    window.__bootCtrl = { startBoot, stop, pauseBoot, resumeBoot };
+
+    // Resume/power on gestures for audio restrictions
+    function resumeAudioOnFirstGesture() {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(()=>{});
+      }
+      window.removeEventListener('pointerdown', resumeAudioOnFirstGesture);
+      window.removeEventListener('keydown', resumeAudioOnFirstGesture);
+    }
+    window.addEventListener('pointerdown', resumeAudioOnFirstGesture);
+    window.addEventListener('keydown', resumeAudioOnFirstGesture);
+
+    window.startBoot = startBoot;
+    window.stopBoot = stop;
+  })();
+
+  /* -----------------------------
+     BIOS simulation
+     ----------------------------- */
+  (function () {
+    const biosOverlay = document.getElementById('bios-overlay');
+    const biosScreen = document.getElementById('bios-screen');
+    const biosClose = document.getElementById('bios-close');
+    const biosRun = document.getElementById('bios-run');
+
+    // sample BIOS log lines
+    const BIOS_LINES = [
+      "PhoenixBIOS 4.0 Release 6.0",
+      "Copyright (C) 1985-1998 Phoenix Technologies Ltd.",
+      "",
+      "CPU: Intel(R) Core(TM) Emulator 1000 MHz",
+      "Memory Testing: 65536K OK",
+      "Detecting IDE drives: Primary Master - WDC 80GB",
+      "Detecting IDE drives: Primary Slave  - none",
+      "USB Controller Initialized",
+      "PXE-E61: Media test failure, check cable",
+      "PXE-M0F: Exiting PXE ROM",
+      "",
+      "Press <F2> for setup, <F12> for boot menu",
+      "",
+      "Booting from Hard Disk..."
+    ];
+
+    let biosTimer = null;
+    let lineIndex = 0;
+
+    function showBios() {
+      biosScreen.textContent = "";
+      lineIndex = 0;
+      biosOverlay.style.display = 'block';
+      biosOverlay.setAttribute('aria-hidden','false');
+    }
+
+    function hideBios() {
+      biosOverlay.style.display = 'none';
+      biosOverlay.setAttribute('aria-hidden','true');
+      // resume boot
+      if (window.__bootCtrl) window.__bootCtrl.resumeBoot();
+    }
+
+    function runBiosSequence() {
+      biosScreen.textContent = "";
+      lineIndex = 0;
+      biosRun.disabled = true;
+      biosClose.disabled = true;
+
+      function step() {
+        if (lineIndex < BIOS_LINES.length) {
+          biosScreen.textContent += BIOS_LINES[lineIndex] + "\n";
+          lineIndex++;
+          biosTimer = setTimeout(step, 600);
+        } else {
+          biosScreen.textContent += "\n[Press ESC or Close to return to boot]\n";
+          biosRun.disabled = false;
+          biosClose.disabled = false;
+        }
+      }
+      step();
+    }
+
+    biosRun.addEventListener('click', () => {
+      runBiosSequence();
+    });
+    biosClose.addEventListener('click', () => {
+      clearTimeout(biosTimer);
+      hideBios();
+    });
+
+    // ESC key closes bios
+    window.addEventListener('keydown', (e) => {
+      if (biosOverlay.style.display === 'block' && e.key === 'Escape') {
+        biosClose.click();
+      }
+    });
+
+    window.showBios = showBios; // expose for other code
+  })();
+
+  /* -----------------------------
+     Original Glossy XP script (trimmed/kept features) +
+     Additions:
+      - uploadedFiles array usage
+      - file uploading opens HTML/audio and registers file entries
+      - Computer app that sets white cursor while open
+      - Lock screen implementation (auto-shown at boot end)
+      - Weather app & desktop icon
+     ----------------------------- */
+
+    // DOM refs & state
+    const startButton = document.getElementById('startButton');
+    const startMenu = document.getElementById('startMenu');
+    const contextMenu = document.getElementById('contextMenu');
+    const clockEl = document.getElementById('clock');
+    const windowsRoot = document.getElementById('windowsRoot');
+    const taskbarCenter = document.getElementById('taskbarCenter');
+    const pinnedArea = document.getElementById('pinnedArea');
+    const allAppsList = document.getElementById('allAppsList');
+    const shutdownBtn = document.getElementById('shutdownBtn');
+    const desktopEl = document.getElementById('desktop');
+    const desktopIconsEl = document.getElementById('desktopIcons');
+    const filePicker = document.getElementById('filePicker');
+    const assistiveRoot = document.getElementById('assistiveRoot');
+
+    const lockScreenEl = document.getElementById('lock-screen');
+    const lockTimeEl = document.getElementById('lockTime');
+    const lockDateEl = document.getElementById('lockDate');
+    const lockInput = document.getElementById('lockInput');
+    const lockUnlockBtn = document.getElementById('lockUnlockBtn');
+    const lockCard = document.getElementById('lockCard');
+    const lockUserSpan = document.getElementById('lockUser');
+    const smileyBuddy = document.getElementById('smileyBuddy');
+
+    let zTop = 100;
+    const PIN_KEY = 'sim-pinned';
+    const NOTEPAD_KEY = 'sim-notepad-content';
+    const WP_KEY = 'sim-wallpaper';
+    const ASSISTIVE_KEY = 'sim-assistive-hidden';
+    const ASSISTIVE_POS_KEY = 'sim-assistive-pos';
+
+    // Wallpaper presets (used by the wallpaper switcher)
+    const WALLPAPERS = [
+      { id: 'bliss', name: 'Bliss (XP)', url: 'https://upload.wikimedia.org/wikipedia/en/5/5f/Bliss.jpg' },
+      { id: 'meadow', name: 'Green Meadow', url: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=1280&q=80' },
+      { id: 'mountains', name: 'Mountains', url: 'https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=1280&q=80' },
+      { id: 'abstract', name: 'Abstract', url: 'https://images.unsplash.com/photo-1504198266288-1659872e6590?auto=format&fit=crop&w=1280&q=80' }
+    ];
+
+    // App catalog (source of truth for listing/install) — added 'computer' and 'weather'
+    const CATALOG = [
+      { id: 'notepad', name: 'Notepad', desc: 'Simple text editor', run: () => openNotepad() },
+      { id: 'browser', name: 'Internet Explorer', desc: 'Web browser (iframe)', run: () => openBrowser('https://google.com/?igu=1') },
+      { id: 'control', name: 'Control Panel', desc: 'Display & settings', run: () => openControlPanel() },
+      { id: 'camera', name: 'Camera', desc: 'Use your webcam', run: () => openCamera() },
+      { id: 'appmarket', name: 'App Market', desc: 'Install apps', run: () => openAppMarket() },
+      { id: 'computer', name: 'Computer', desc: 'My Computer (file overview)', run: () => openComputer() },
+      { id: 'weather', name: 'Weather', desc: 'Local weather (uses Open-Meteo)', run: () => openWeather() }
+    ];
+
+    // Utility: flash message
+    function flashMessage(text) {
+      const m = document.createElement('div');
+      m.textContent = text;
+      m.style.position='fixed'; m.style.left='50%'; m.style.transform='translateX(-50%)';
+      m.style.bottom='110px'; m.style.background='linear-gradient(#ffffff,#eaf3ff)'; m.style.padding='10px 16px';
+      m.style.borderRadius='10px'; m.style.border='1px solid rgba(56,122,204,0.14)'; m.style.zIndex=999;
+      document.body.appendChild(m);
+      setTimeout(()=> { m.style.transition='all 180ms'; m.style.opacity='0'; m.style.transform+=' translateY(8px)'; }, 900);
+      setTimeout(()=> m.remove(), 1400);
+    }
+
+    // Clock
+    function updateClock(){
+      const d = new Date();
+      let h = d.getHours();
+      const m = d.getMinutes();
+      const am = h < 12 ? 'AM' : 'PM';
+      h = h % 12; h = h === 0 ? 12 : h;
+      const mm = String(m).padStart(2,'0');
+      clockEl.textContent = `${String(h).padStart(2,' ')}:${mm} ${am}`;
+    }
+    updateClock(); setInterval(updateClock,1000);
+
+    // Lock screen time updater (runs while visible)
+    let lockTimer = null;
+    function updateLockTime(){
+      const d = new Date();
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      const ss = String(d.getSeconds()).padStart(2,'0');
+      // show HH:MM (24h) for aesthetics
+      lockTimeEl.textContent = `${hh}:${mm}`;
+      lockDateEl.textContent = d.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    }
+
+    // Start menu toggle
+    function toggleStartMenu(open) {
+      const shouldOpen = (typeof open === 'boolean') ? open : !startMenu.classList.contains('show');
+      if (shouldOpen) {
+        startMenu.classList.add('show'); startMenu.style.display='block'; startMenu.setAttribute('aria-hidden','false');
+      } else {
+        startMenu.classList.remove('show'); startMenu.style.display='none'; startMenu.setAttribute('aria-hidden','true');
+      }
+    }
+    startButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleStartMenu();
+      closeContextMenu();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!startMenu.contains(e.target) && !startButton.contains(e.target)) toggleStartMenu(false);
+      if (!contextMenu.contains(e.target)) closeContextMenu();
+      // If click outside assistive menu hide it
+      if (!assistiveRoot.contains(e.target)) closeAssistiveMenu();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { toggleStartMenu(false); closeContextMenu(); closeAssistiveMenu(); }
+      if (e.key === 'Meta') toggleStartMenu(true);
+    });
+
+    // Keyboard shortcut to lock: Ctrl+Alt+L
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.altKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        showLockScreen();
+      }
+    });
+
+    // Populate All Programs list (classic listing + Install buttons where appropriate)
+    function buildAllApps() {
+      allAppsList.innerHTML = '';
+      CATALOG.forEach(app => {
+        const row = document.createElement('div'); row.className = 'app-row'; row.dataset.app = app.id;
+        const ico = document.createElement('div'); ico.textContent = app.name[0]; ico.style.fontWeight='900';
+        const nm = document.createElement('div'); nm.style.flex='1'; nm.innerHTML = `<div style="font-weight:800;color:#063a6a">${app.name}</div><div style="font-size:12px;color:#2f6c9c">${app.desc}</div>`;
+        const btn = document.createElement('button'); btn.className = 'tbtn'; btn.textContent = 'Install & Pin';
+        // If already pinned, change text
+        if (isPinned(app.id)) { btn.textContent = 'Pinned'; btn.disabled = true; }
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          addPinnedApp(app.id, true);
+          btn.textContent = 'Pinned';
+          btn.disabled = true;
+          flashMessage(`${app.name} installed and pinned`);
+        });
+        row.appendChild(ico); row.appendChild(nm); row.appendChild(btn);
+        row.addEventListener('click', () => { toggleStartMenu(false); app.run(); });
+        allAppsList.appendChild(row);
+      });
+    }
+
+    // Context menu (desktop right-click)
+    desktopEl.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openContextMenu(e.clientX, e.clientY);
+      toggleStartMenu(false);
+    });
+    function openContextMenu(x,y){
+      contextMenu.style.left = x + 'px';
+      contextMenu.style.top = y + 'px';
+      contextMenu.classList.add('show');
+      contextMenu.style.display = 'block';
+      contextMenu.setAttribute('aria-hidden','false');
+    }
+    function closeContextMenu(){
+      contextMenu.classList.remove('show');
+      contextMenu.style.display = 'none';
+    }
+    document.getElementById('ctxRefresh').addEventListener('click', () => {
+      const overlay = document.createElement('div');
+      overlay.style.position='fixed'; overlay.style.inset='0'; overlay.style.background='rgba(255,255,255,0.06)';
+      overlay.style.zIndex=900; overlay.style.pointerEvents='none';
+      document.body.appendChild(overlay);
+      setTimeout(()=> overlay.remove(),220);
+      closeContextMenu();
+    });
+    document.getElementById('ctxNewNotepad').addEventListener('click', () => { openApp('notepad'); closeContextMenu(); });
+    document.getElementById('ctxAppMarket').addEventListener('click', () => { openApp('appmarket'); closeContextMenu(); });
+
+    // Upload file from computer (new right-click option)
+    document.getElementById('ctxUpload').addEventListener('click', () => {
+      closeContextMenu();
+      // trigger the hidden file input (multiple allowed)
+      filePicker.value = '';
+      filePicker.click();
+    });
+
+    // Keep track of created blob URLs so we can revoke them when windows close
+    const createdBlobUrls = new Set();
+
+    // Handle selected files: HTML -> run in iframe window; audio -> open in music player; images/text handled as before
+    filePicker.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+
+      // separate into categories
+      const htmlFiles = files.filter(f => f.type === 'text/html' || /\.html?$/i.test(f.name));
+      const audioFiles = files.filter(f => f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|flac)$/i.test(f.name));
+      const imageFiles = files.filter(f => f.type.startsWith('image/'));
+      const textFiles = files.filter(f => f.type.startsWith('text/') && !htmlFiles.includes(f));
+      const others = files.filter(f => !htmlFiles.includes(f) && !audioFiles.includes(f) && !imageFiles.includes(f) && !textFiles.includes(f));
+
+      // Open HTML files in their own sandboxed windows (blob URLs)
+      for (const f of htmlFiles) {
+        try {
+          const blobUrl = URL.createObjectURL(f);
+          createdBlobUrls.add(blobUrl);
+          uploadedFiles.push({ name: f.name, type: f.type, url: blobUrl, kind: 'html' });
+          openUploadedHtml(f.name || 'uploaded.html', blobUrl);
+          flashMessage(`Opened HTML: ${f.name}`);
+        } catch (err) {
+          flashMessage(`Unable to open HTML: ${f.name}`);
+        }
+      }
+
+      // Open audio files in music player (if >1 provide playlist)
+      if (audioFiles.length > 0) {
+        // create blob URLs for tracks
+        const tracks = audioFiles.map(f => {
+          const url = URL.createObjectURL(f);
+          createdBlobUrls.add(url);
+          uploadedFiles.push({ name: f.name, type: f.type, url, kind: 'audio' });
+          return { name: f.name, url, file: f };
+        });
+        openMusicPlayer(tracks);
+        flashMessage(`Loaded ${tracks.length} audio file(s) into Music Player`);
+      }
+
+      // Images: apply first image as wallpaper (existing behavior)
+      if (imageFiles.length > 0) {
+        const first = imageFiles[0];
+        const data = await readFileAsDataURL(first);
+        applyWallpaper(data, true);
+        uploadedFiles.push({ name: first.name, type: first.type, url: data, kind: 'image' });
+        flashMessage(`Wallpaper set: ${first.name}`);
+      }
+
+      // Text files: open in Notepad
+      for (const f of textFiles) {
+        const txt = await readFileAsText(f);
+        uploadedFiles.push({ name: f.name, type: f.type, url: null, kind: 'text', text: txt });
+        openApp('notepad');
+        setTimeout(() => {
+          const win = document.getElementById('app-notepad');
+          if (win) {
+            const ta = win.querySelector('textarea');
+            if (ta) {
+              ta.value = txt;
+              flashMessage(`Opened ${f.name} in Notepad`);
+            }
+          }
+        }, 120);
+      }
+
+      for (const f of others) {
+        uploadedFiles.push({ name: f.name, type: f.type, url: null, kind: 'other' });
+        flashMessage(`Selected: ${f.name}`);
+      }
+    });
+
+    function readFileAsDataURL(file) {
+      return new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+    }
+    function readFileAsText(file) {
+      return new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsText(file);
+      });
+    }
+
+    // Shutdown button (simulate restart by running boot)
+    shutdownBtn.addEventListener('click', () => {
+      // hide desktop and run boot (simulated restart)
+      desktopEl.classList.add('hidden');
+      // run boot for 2s (example) and re-init after finish
+      window.startBoot({
+        duration: 2200,
+        playSound: true,
+        bootText: 'Restarting Glossy XP',
+        onFinish: () => {
+          flashMessage('Restarted (simulated)');
+          // re-run init to refresh pinned/apps state (safe)
+          init();
+          // Show lock screen after restart as well
+          showLockScreen();
+        }
+      });
+    });
+
+    /* -----------------------------
+       Pin management: addPinnedApp, loadPinned, savePinned
+       ----------------------------- */
+    function loadPinned() {
+      try {
+        const raw = localStorage.getItem(PIN_KEY);
+        const arr = raw ? JSON.parse(raw) : ['notepad','browser','control'];
+        pinnedArea.innerHTML = '';
+        arr.forEach(k => addPinnedApp(k,false));
+      } catch(e) {
+        pinnedArea.innerHTML = '';
+        ['notepad','browser','control'].forEach(k => addPinnedApp(k,false));
+      }
+      buildAllApps(); // update install button states
+    }
+    function savePinned() {
+      const arr = [...pinnedArea.children].map(c => c.dataset.app);
+      localStorage.setItem(PIN_KEY, JSON.stringify(arr));
+      buildAllApps(); // reflect pinned state in All Programs
+    }
+    function isPinned(appKey) {
+      return [...pinnedArea.children].some(c => c.dataset.app === appKey);
+    }
+    function addPinnedApp(appKey, save=true) {
+      // avoid duplicates
+      if (isPinned(appKey)) return;
+      const meta = CATALOG.find(c=>c.id===appKey) || { name: appKey };
+      const el = document.createElement('div');
+      el.className = 'pin';
+      el.dataset.app = appKey;
+      el.innerHTML = `<div class="ico">${meta.name[0]}</div><div style="font-size:13px">${meta.name}</div>`;
+      el.addEventListener('click', () => { openApp(appKey); toggleStartMenu(false); });
+      pinnedArea.appendChild(el);
+      if (save) savePinned();
+    }
+
+    /* -----------------------------
+       Desktop icons helper
+       ----------------------------- */
+    function createDesktopIcon({ id, title, iconHtml = '❖', onOpen }) {
+      // avoid duplicates
+      if (document.getElementById(id)) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'desktop-icon';
+      wrap.id = id;
+      wrap.setAttribute('role','listitem');
+      wrap.innerHTML = `<div class="ico-wrap">${iconHtml}</div><div class="label">${title}</div>`;
+      // single click selects (visual could be added); double click opens
+      wrap.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        if (typeof onOpen === 'function') onOpen();
+      });
+      // keyboard accessibility
+      wrap.tabIndex = 0;
+      wrap.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          if (typeof onOpen === 'function') onOpen();
+        }
+      });
+      desktopIconsEl.appendChild(wrap);
+    }
+
+    /* -----------------------------
+       Window system (Min/Max/Close)
+       ----------------------------- */
+    const taskButtons = {}; // id -> taskbar button reference
+
+    function createWindow({id, title, width=520, height=420, x=120, y=80, contentEl=null}) {
+      // if already open, focus and restore
+      const existing = document.getElementById(id);
+      if (existing) { bringToFront(existing); if (existing.classList.contains('minimized')) restoreWindow(existing); return existing; }
+
+      const win = document.createElement('div');
+      win.className = 'window';
+      win.id = id;
+      win.style.width = width + 'px';
+      win.style.height = height + 'px';
+      win.style.left = x + 'px';
+      win.style.top = y + 'px';
+      win.style.zIndex = ++zTop;
+      win.dataset.origLeft = x; win.dataset.origTop = y; win.dataset.origWidth = width; win.dataset.origHeight = height;
+
+      // titlebar & buttons
+      const tb = document.createElement('div'); tb.className = 'titlebar';
+      const titleSpan = document.createElement('div'); titleSpan.className = 'title'; titleSpan.textContent = title;
+      const btnMin = document.createElement('button'); btnMin.className='tbtn'; btnMin.innerHTML='▁'; btnMin.setAttribute('aria-label','Minimize');
+      const btnMax = document.createElement('button'); btnMax.className='tbtn'; btnMax.innerHTML='◻'; btnMax.setAttribute('aria-label','Maximize');
+      const btnClose = document.createElement('button'); btnClose.className='tbtn'; btnClose.innerHTML='✕'; btnClose.setAttribute('aria-label','Close');
+
+      tb.appendChild(titleSpan);
+      tb.appendChild(btnMin);
+      tb.appendChild(btnMax);
+      tb.appendChild(btnClose);
+      win.appendChild(tb);
+
+      // content
+      const content = document.createElement('div'); content.className='content';
+      if (contentEl) content.appendChild(contentEl);
+      win.appendChild(content);
+
+      windowsRoot.appendChild(win);
+
+      // taskbar entry
+      createTaskbarButton(id, title);
+
+      // draggable titlebar (ignore clicks on buttons)
+      makeDraggable(win, tb);
+
+      // pointer to front
+      win.addEventListener('pointerdown', () => bringToFront(win));
+
+      // Wire title buttons
+      btnClose.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeWindow(id);
+      });
+      btnMin.addEventListener('click', (e) => {
+        e.stopPropagation();
+        minimizeWindow(id);
+      });
+      btnMax.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMaximize(id);
+      });
+
+      titleSpan.addEventListener('dblclick', () => toggleMaximize(id));
+      [btnClose, btnMin, btnMax].forEach(b => { b.addEventListener('keydown', ev => { if (ev.key==='Enter' || ev.key===' ') { ev.preventDefault(); b.click(); } }); });
+
+      return win;
+    }
+
+    function bringToFront(el) {
+      if (typeof el === 'string') el = document.getElementById(el);
+      if (!el) return;
+      zTop++; el.style.zIndex = zTop;
+      const tb = taskButtons[el.id];
+      if (tb) tb.classList.remove('minimized');
+    }
+
+    function createTaskbarButton(id, title) {
+      if (taskButtons[id]) return taskButtons[id];
+      const btn = document.createElement('div');
+      btn.className = 'taskbar-icon';
+      btn.id = 'tb-' + id;
+      btn.textContent = title;
+      btn.dataset.win = id;
+      btn.addEventListener('click', () => {
+        const w = document.getElementById(id);
+        if (!w) { btn.remove(); delete taskButtons[id]; return; }
+        if (w.classList.contains('minimized') || w.style.display === 'none') {
+          restoreWindow(w);
+        } else {
+          const focused = parseInt(w.style.zIndex) === zTop;
+          if (focused) minimizeWindow(id);
+          else bringToFront(w);
+        }
+      });
+      taskbarCenter.appendChild(btn);
+      taskButtons[id] = btn;
+      return btn;
+    }
+
+    function removeTaskbarButton(id) {
+      const btn = taskButtons[id];
+      if (btn) { btn.remove(); delete taskButtons[id]; }
+    }
+
+    function minimizeWindow(id) {
+      const w = document.getElementById(id);
+      if (!w) return;
+      w.classList.add('minimized');
+      w.style.display = 'none';
+      const btn = taskButtons[id];
+      if (btn) btn.classList.add('minimized');
+    }
+
+    function restoreWindow(w) {
+      if (typeof w === 'string') w = document.getElementById(w);
+      if (!w) return;
+      w.classList.remove('minimized');
+      w.style.display = 'flex';
+      bringToFront(w);
+      const btn = taskButtons[w.id];
+      if (btn) btn.classList.remove('minimized');
+    }
+
+    function toggleMaximize(id) {
+      const w = document.getElementById(id);
+      if (!w) return;
+      const margin = 12;
+      const taskbarH = getTaskbarHeight();
+      const availableHeight = window.innerHeight - margin * 2 - taskbarH;
+      if (w.classList.contains('max')) {
+        // restore
+        w.style.left = w.dataset.lastLeft || (w.dataset.origLeft + 'px');
+        w.style.top = w.dataset.lastTop || (w.dataset.origTop + 'px');
+        w.style.width = w.dataset.lastWidth || (w.dataset.origWidth + 'px');
+        w.style.height = w.dataset.lastHeight || (w.dataset.origHeight + 'px');
+        w.classList.remove('max');
+        bringToFront(w);
+      } else {
+        // store
+        w.dataset.lastLeft = w.style.left;
+        w.dataset.lastTop  = w.style.top;
+        w.dataset.lastWidth = w.style.width;
+        w.dataset.lastHeight = w.style.height;
+        // maximize
+        w.style.left = margin + 'px';
+        w.style.top = margin + 'px';
+        w.style.width = (window.innerWidth - margin * 2) + 'px';
+        w.style.height = (availableHeight) + 'px';
+        w.classList.add('max');
+        bringToFront(w);
+      }
+    }
+
+    // Enhanced closeWindow: revoke any blob URLs created for this window's content
+    function closeWindow(id) {
+      const w = document.getElementById(id);
+      if (!w) return;
+      // find blobs in iframes or audio elements and revoke them
+      try {
+        const iframes = w.querySelectorAll('iframe');
+        iframes.forEach(iframe => {
+          const s = iframe.src || '';
+          if (s.startsWith('blob:')) {
+            URL.revokeObjectURL(s);
+            createdBlobUrls.delete(s);
+            // also remove from uploadedFiles list
+            for (let i = uploadedFiles.length - 1; i >= 0; --i) {
+              if (uploadedFiles[i].url === s) uploadedFiles.splice(i,1);
+            }
+          }
+        });
+        const audios = w.querySelectorAll('audio');
+        audios.forEach(a => {
+          const s = a.src || (a.querySelector('source') && a.querySelector('source').src) || '';
+          if (s && s.startsWith('blob:')) {
+            URL.revokeObjectURL(s);
+            createdBlobUrls.delete(s);
+            for (let i = uploadedFiles.length - 1; i >= 0; --i) {
+              if (uploadedFiles[i].url === s) uploadedFiles.splice(i,1);
+            }
+          }
+        });
+      } catch (e) { /* ignore */ }
+
+      // If the computer app was closed, reset cursor to default
+      if (id === 'app-computer') {
+        document.body.classList.remove('white-cursor');
+      }
+
+      if (id === 'app-camera' && cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+      }
+      removeTaskbarButton(id);
+      w.remove();
+    }
+
+    function makeDraggable(win, handle){
+      let isDown=false, ox=0, oy=0, startX=0, startY=0;
+      handle.addEventListener('pointerdown', (ev) => {
+        if (ev.target.tagName === 'BUTTON') return;
+        isDown=true; try{ handle.setPointerCapture(ev.pointerId); }catch(e){}
+        ox = win.offsetLeft; oy = win.offsetTop;
+        startX = ev.clientX; startY = ev.clientY;
+        bringToFront(win);
+      });
+      window.addEventListener('pointermove', (ev) => {
+        if (!isDown) return;
+        const dx = ev.clientX - startX; const dy = ev.clientY - startY;
+        win.style.left = (ox + dx) + 'px';
+        win.style.top = (oy + dy) + 'px';
+      });
+      window.addEventListener('pointerup', (ev) => {
+        if (!isDown) return;
+        isDown=false;
+        try{ handle.releasePointerCapture && handle.releasePointerCapture(ev.pointerId); }catch(e){}
+      });
+    }
+
+    // read CSS var height
+    function getTaskbarHeight() {
+      const val = getComputedStyle(document.documentElement).getPropertyValue('--taskbar-height') || '44px';
+      return parseInt(val, 10) || 44;
+    }
+
+    /* -----------------------------
+       Apps implementations (added Computer & Weather)
+       ----------------------------- */
+
+    // Notepad
+    function openNotepad() {
+      const contentEl = document.createElement('div');
+      contentEl.style.display='flex'; contentEl.style.flexDirection='column'; contentEl.style.height='100%';
+      const toolbar = document.createElement('div'); toolbar.style.display='flex'; toolbar.style.gap='8px'; toolbar.style.marginBottom='8px';
+      const saveBtn = document.createElement('button'); saveBtn.className='tbtn'; saveBtn.textContent='Save';
+      const loadBtn = document.createElement('button'); loadBtn.className='tbtn'; loadBtn.textContent='Load';
+      const clearBtn = document.createElement('button'); clearBtn.className='tbtn'; clearBtn.textContent='Clear';
+      toolbar.appendChild(saveBtn); toolbar.appendChild(loadBtn); toolbar.appendChild(clearBtn);
+
+      const ta = document.createElement('textarea');
+      ta.style.flex='1'; ta.style.resize='none'; ta.style.padding='8px'; ta.style.borderRadius='6px'; ta.style.border='1px solid rgba(0,0,0,0.06)';
+      ta.value = localStorage.getItem(NOTEPAD_KEY) || '';
+
+      contentEl.appendChild(toolbar); contentEl.appendChild(ta);
+
+      const win = createWindow({ id: 'app-notepad', title: 'Notepad', width:600, height:420, x:140, y:90, contentEl });
+
+      saveBtn.addEventListener('click', () => {
+        localStorage.setItem(NOTEPAD_KEY, ta.value);
+        flashMessage('Notepad saved');
+      });
+      loadBtn.addEventListener('click', () => {
+        ta.value = localStorage.getItem(NOTEPAD_KEY) || '';
+        flashMessage('Notepad loaded');
+      });
+      clearBtn.addEventListener('click', () => {
+        ta.value = '';
+      });
+
+      return win;
+    }
+
+    // Browser (normal web pages)
+    function openBrowser(homepage = 'https://google.com/?igu=1') {
+      const contentEl = document.createElement('div');
+      const tb = document.createElement('div'); tb.className='browser-toolbar'; tb.style.display='flex'; tb.style.gap='8px'; tb.style.marginBottom='8px';
+      const url = document.createElement('input'); url.type='text'; url.value = homepage; url.style.flex='1'; url.style.padding='8px';
+      const go = document.createElement('button'); go.className = 'tbtn'; go.textContent='Go';
+      const fsBtn = document.createElement('button'); fsBtn.className='tbtn'; fsBtn.textContent='Enter Fullscreen';
+      tb.appendChild(url); tb.appendChild(go); tb.appendChild(fsBtn);
+
+      const frameWrap = document.createElement('div'); frameWrap.style.height='100%'; frameWrap.style.display='flex'; frameWrap.style.flexDirection='column';
+      const frame = document.createElement('div'); frame.className='browser-frame'; frame.style.flex='1';
+      const iframe = document.createElement('iframe'); iframe.src = homepage; iframe.style.width='100%'; iframe.style.height='100%'; iframe.style.border='0';
+      frame.appendChild(iframe);
+      frameWrap.appendChild(tb); frameWrap.appendChild(frame);
+
+      contentEl.appendChild(frameWrap);
+
+      const win = createWindow({ id: 'app-browser', title: 'Internet Explorer', width:800, height:600, x:100, y:60, contentEl });
+      toggleMaximize('app-browser');
+
+      go.addEventListener('click', () => { iframe.src = url.value; });
+      url.addEventListener('keydown', (e) => { if (e.key === 'Enter') iframe.src = url.value; });
+
+      fsBtn.addEventListener('click', async () => {
+        try {
+          if (iframe.requestFullscreen) await iframe.requestFullscreen();
+          else if (frame.requestFullscreen) await frame.requestFullscreen();
+          else flashMessage('Fullscreen API not supported');
+        } catch (err) {
+          flashMessage('Unable to enter fullscreen (blocked)');
+        }
+      });
+
+      return win;
+    }
+
+    // Open uploaded HTML (blob URL) in its own window and run it
+    function openUploadedHtml(filename, blobUrl) {
+      // create content: toolbar + iframe that loads blob URL
+      const contentEl = document.createElement('div');
+      const tb = document.createElement('div'); tb.style.display='flex'; tb.style.gap='8px'; tb.style.marginBottom='8px';
+      const lbl = document.createElement('div'); lbl.textContent = filename; lbl.style.fontWeight='800'; lbl.style.color='#063a6a'; lbl.style.display='flex'; lbl.style.alignItems='center';
+      const fsBtn = document.createElement('button'); fsBtn.className='tbtn'; fsBtn.textContent='Enter Fullscreen';
+      tb.appendChild(lbl); tb.appendChild(fsBtn);
+
+      const frameWrap = document.createElement('div'); frameWrap.style.height='100%'; frameWrap.style.display='flex'; frameWrap.style.flexDirection='column';
+      const frame = document.createElement('div'); frame.className='browser-frame'; frame.style.flex='1';
+      const iframe = document.createElement('iframe');
+      iframe.src = blobUrl;
+      iframe.style.width='100%'; iframe.style.height='100%'; iframe.style.border='0'; // scripts in blob will run normally
+      frame.appendChild(iframe);
+      frameWrap.appendChild(tb); frameWrap.appendChild(frame);
+      contentEl.appendChild(frameWrap);
+
+      // unique id per upload
+      const id = 'app-html-' + Date.now() + '-' + Math.floor(Math.random()*1000);
+      createWindow({ id, title: filename, width:800, height:600, x:80, y:60, contentEl });
+      toggleMaximize(id);
+
+      fsBtn.addEventListener('click', async () => {
+        try {
+          if (iframe.requestFullscreen) await iframe.requestFullscreen();
+          else if (frame.requestFullscreen) await frame.requestFullscreen();
+          else flashMessage('Fullscreen API not supported');
+        } catch (err) {
+          flashMessage('Unable to enter fullscreen (blocked)');
+        }
+      });
+    }
+
+    // Music player: accepts array of {name, url}
+    function openMusicPlayer(tracks) {
+      // unique id
+      const id = 'app-music-' + Date.now();
+      const content = document.createElement('div');
+      const hdr = document.createElement('div'); hdr.style.fontWeight='800'; hdr.style.color='#073764'; hdr.style.marginBottom='8px'; hdr.textContent='Music Player';
+      content.appendChild(hdr);
+
+      // audio element
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.style.width = '100%';
+      audio.preload = 'metadata';
+
+      // playlist UI
+      const playlist = document.createElement('div'); playlist.className = 'music-playlist';
+      let current = 0;
+
+      tracks.forEach((t, i) => {
+        const tr = document.createElement('div');
+        tr.className = 'music-track';
+        tr.textContent = t.name;
+        tr.dataset.index = i;
+        tr.addEventListener('click', () => {
+          current = i;
+          setTrack(i);
+          audio.play().catch(()=>{});
+        });
+        playlist.appendChild(tr);
+      });
+
+      function setTrack(i) {
+        const t = tracks[i];
+        if (!t) return;
+        audio.src = t.url;
+        // highlight
+        playlist.querySelectorAll('.music-track').forEach(n => n.classList.remove('playing'));
+        const el = playlist.querySelector(`.music-track[data-index="${i}"]`);
+        if (el) el.classList.add('playing');
+      }
+
+      // controls: prev/next
+      const ctrlRow = document.createElement('div'); ctrlRow.style.display='flex'; ctrlRow.style.gap='8px'; ctrlRow.style.marginTop='8px';
+      const prevBtn = document.createElement('button'); prevBtn.className='tbtn'; prevBtn.textContent='Prev';
+      const nextBtn = document.createElement('button'); nextBtn.className='tbtn'; nextBtn.textContent='Next';
+      ctrlRow.appendChild(prevBtn); ctrlRow.appendChild(nextBtn);
+
+      prevBtn.addEventListener('click', () => {
+        current = (current - 1 + tracks.length) % tracks.length;
+        setTrack(current);
+        audio.play().catch(()=>{});
+      });
+      nextBtn.addEventListener('click', () => {
+        current = (current + 1) % tracks.length;
+        setTrack(current);
+        audio.play().catch(()=>{});
+      });
+
+      // autoplay first track
+      setTrack(0);
+
+      content.appendChild(audio);
+      content.appendChild(ctrlRow);
+      content.appendChild(playlist);
+
+      // create window and show
+      const win = createWindow({ id, title: 'Music Player', width:480, height:360, x:240, y:140, contentEl: content });
+
+      // When this window closes we must revoke track blob URLs (closeWindow does that)
+      // Hook audio end to advance
+      audio.addEventListener('ended', () => {
+        current = (current + 1) % tracks.length;
+        setTrack(current);
+        audio.play().catch(()=>{});
+      });
+
+      return win;
+    }
+
+    // Control Panel (extended with Wallpaper Switcher)
+    function openControlPanel() {
+      const content = document.createElement('div');
+      const hdr = document.createElement('div'); hdr.style.fontWeight='800'; hdr.style.color='#073764'; hdr.style.marginBottom='8px'; hdr.textContent='Control Panel';
+
+      // Wallpaper section
+      const wphdr = document.createElement('div'); wphdr.style.marginBottom='6px'; wphdr.textContent = 'Wallpaper';
+      const presetsNote = document.createElement('div'); presetsNote.style.fontSize='12px'; presetsNote.style.color='#2f6c9c'; presetsNote.style.marginBottom='8px';
+      presetsNote.textContent = 'Choose a preset or paste a URL below.';
+
+      // preset thumbnails
+      const presetRow = document.createElement('div'); presetRow.className = 'wp-presets';
+      WALLPAPERS.forEach(wp => {
+        const thumb = document.createElement('div');
+        thumb.className = 'wp-thumb';
+        thumb.title = wp.name;
+        thumb.style.backgroundImage = `url("${wp.url}")`;
+        thumb.dataset.url = wp.url;
+        thumb.addEventListener('click', () => {
+          // Apply preset and mark selection
+          applyWallpaper(wp.url, true);
+          // update selection visuals
+          content.querySelectorAll('.wp-thumb').forEach(t => t.classList.remove('selected'));
+          thumb.classList.add('selected');
+        });
+        presetRow.appendChild(thumb);
+      });
+
+      // URL input and apply button (existing behavior)
+      const input = document.createElement('input'); input.type='text'; input.placeholder='Wallpaper URL'; input.style.width='100%'; input.style.padding='8px';
+      const apply = document.createElement('button'); apply.className='tbtn'; apply.textContent = 'Apply';
+      const sampleThumb = document.createElement('div');
+      sampleThumb.style.width = '120px'; sampleThumb.style.height = '72px'; sampleThumb.style.borderRadius = '6px';
+      sampleThumb.style.backgroundSize = 'cover'; sampleThumb.style.backgroundPosition = 'center'; sampleThumb.style.border = '1px solid rgba(0,0,0,0.06)';
+      sampleThumb.style.marginLeft = '8px';
+
+      const savedWP = localStorage.getItem(WP_KEY);
+      if (savedWP) {
+        input.value = savedWP;
+        sampleThumb.style.backgroundImage = `url("${savedWP}")`;
+      } else {
+        // show default var value as preview
+        const computed = getComputedStyle(document.documentElement).getPropertyValue('--wallpaper').trim();
+        sampleThumb.style.backgroundImage = computed || `url("${WALLPAPERS[0].url}")`;
+      }
+
+      apply.addEventListener('click', () => {
+        const v = input.value.trim();
+        if (!v) return flashMessage('Enter a wallpaper URL');
+        applyWallpaper(v, true);
+        sampleThumb.style.backgroundImage = `url("${v}")`;
+        // clear selected preset visuals
+        content.querySelectorAll('.wp-thumb').forEach(t => t.classList.remove('selected'));
+      });
+
+      content.appendChild(hdr);
+      content.appendChild(wphdr);
+      content.appendChild(presetsNote);
+      content.appendChild(presetRow);
+      const rowFlex = document.createElement('div'); rowFlex.style.display='flex'; rowFlex.style.alignItems='center'; rowFlex.style.gap='12px'; rowFlex.style.marginTop='8px';
+      rowFlex.appendChild(input);
+      rowFlex.appendChild(apply);
+      rowFlex.appendChild(sampleThumb);
+      content.appendChild(rowFlex);
+
+      return createWindow({ id: 'app-control', title: 'Control Panel', width:560, height:320, x:200, y:120, contentEl: content });
+    }
+
+    // Apply wallpaper helper (sets CSS var and optionally saves)
+    function applyWallpaper(url, save=false) {
+      // if it's a data URL or blob URL, wrap appropriately; if user provides raw url, wrap
+      const wrapped = url.startsWith('url(') ? url : `url("${url}")`;
+      document.documentElement.style.setProperty('--wallpaper', wrapped);
+      if (save) {
+        try { localStorage.setItem(WP_KEY, url); } catch (e) {}
+      }
+    }
+
+    // App Market
+    function openAppMarket() {
+      const content = document.createElement('div');
+      const hdr = document.createElement('div'); hdr.style.fontWeight='800'; hdr.style.color='#073764'; hdr.style.marginBottom='8px'; hdr.textContent='App Market';
+      content.appendChild(hdr);
+
+      const list = document.createElement('div'); list.className='list';
+      CATALOG.forEach(a => {
+        const card = document.createElement('div'); card.className='app-card';
+        const ic = document.createElement('div'); ic.className='icon'; ic.textContent=a.name[0];
+        const info = document.createElement('div'); info.style.flex='1';
+        const nm = document.createElement('div'); nm.style.fontWeight='800'; nm.textContent = a.name;
+        const desc = document.createElement('div'); desc.textContent = a.desc;
+        const btn = document.createElement('button'); btn.className='tbtn'; btn.textContent='Install & Pin';
+        if (isPinned(a.id)) { btn.textContent = 'Pinned'; btn.disabled = true; }
+        info.appendChild(nm); info.appendChild(desc);
+        card.appendChild(ic); card.appendChild(info); card.appendChild(btn);
+        list.appendChild(card);
+        btn.addEventListener('click', () => {
+          addPinnedApp(a.id, true);
+          btn.textContent = 'Pinned';
+          btn.disabled = true;
+          flashMessage(a.name + ' installed and pinned');
+        });
+      });
+      content.appendChild(list);
+
+      return createWindow({ id: 'app-market', title: 'App Market', width:560, height:420, x:200, y:120, contentEl: content });
+    }
+
+    // Camera
+    let cameraStream = null;
+    async function openCamera() {
+      const content = document.createElement('div');
+      const vwrap = document.createElement('div'); vwrap.style.height='320px'; vwrap.style.background='#000'; vwrap.style.borderRadius='8px'; vwrap.style.display='flex'; vwrap.style.alignItems='center'; vwrap.style.justifyContent='center';
+      const video = document.createElement('video'); video.autoplay=true; video.playsInline=true; video.style.width='100%'; vwrap.appendChild(video);
+      const snapBtn = document.createElement('button'); snapBtn.className='tbtn'; snapBtn.textContent='Snapshot';
+      const stopBtn = document.createElement('button'); stopBtn.className='tbtn'; stopBtn.textContent='Stop Camera';
+      const controls = document.createElement('div'); controls.style.marginTop='8px'; controls.appendChild(snapBtn); controls.appendChild(stopBtn);
+      const gallery = document.createElement('div'); gallery.style.display='flex'; gallery.style.gap='8px'; gallery.style.flexWrap='wrap'; gallery.style.marginTop='8px';
+
+      content.appendChild(vwrap); content.appendChild(controls); content.appendChild(gallery);
+
+      const win = createWindow({ id: 'app-camera', title: 'Camera', width:520, height:520, x:240, y:100, contentEl: content });
+
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({video:true});
+        video.srcObject = cameraStream;
+      } catch (err) {
+        vwrap.textContent = 'Camera access denied or unavailable.';
+      }
+
+      snapBtn.addEventListener('click', () => {
+        const canvas = document.createElement('canvas'); canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        const img = new Image(); img.src = canvas.toDataURL('image/png'); img.style.width='140px'; img.style.borderRadius='6px';
+        gallery.appendChild(img);
+        flashMessage('Snapshot captured');
+      });
+      stopBtn.addEventListener('click', () => {
+        if (cameraStream) {
+          cameraStream.getTracks().forEach(t=>t.stop());
+          cameraStream = null;
+        }
+        flashMessage('Camera stopped');
+      });
+
+      return win;
+    }
+
+    /* -----------------------------
+       Computer app (new)
+       - shows system summary and uploaded files
+       - while open, cursor switches to a white cursor
+       ----------------------------- */
+    function openComputer() {
+      const content = document.createElement('div');
+      content.className = 'computer-grid';
+
+      const left = document.createElement('div'); left.className = 'comp-panel';
+      const right = document.createElement('div'); right.className = 'comp-panel';
+
+      // System summary
+      const sysHdr = document.createElement('div'); sysHdr.style.fontWeight='900'; sysHdr.style.marginBottom='8px'; sysHdr.textContent = 'My Computer';
+      const userRow = document.createElement('div'); userRow.textContent = 'User: ' + (CURRENT_USER || 'Guest');
+      const uaRow = document.createElement('div'); uaRow.textContent = 'Browser: ' + navigator.userAgent;
+      const memRow = document.createElement('div'); memRow.textContent = 'Platform: ' + (navigator.platform || 'Unknown');
+      const storageRow = document.createElement('div'); storageRow.textContent = 'Drives:';
+      const drives = document.createElement('div');
+      drives.className = 'drive';
+      drives.innerHTML = `<strong>C:\\</strong> (Local Disk) — ${Math.floor(Math.random()*800)+100} GB free`; // fake usage for demo
+
+      left.appendChild(sysHdr);
+      left.appendChild(userRow);
+      left.appendChild(uaRow);
+      left.appendChild(memRow);
+      left.appendChild(storageRow);
+      left.appendChild(drives);
+
+      // Uploaded files listing
+      const uploadedHdr = document.createElement('div'); uploadedHdr.style.fontWeight='900'; uploadedHdr.style.marginBottom='8px'; uploadedHdr.textContent = 'Uploaded Files';
+      right.appendChild(uploadedHdr);
+
+      const uploadedList = document.createElement('div'); uploadedList.className = 'uploaded-list';
+
+      function renderUploaded() {
+        uploadedList.innerHTML = '';
+        if (uploadedFiles.length === 0) {
+          uploadedList.textContent = 'No uploaded files in this session.';
+          return;
+        }
+        uploadedFiles.forEach((f, idx) => {
+          const item = document.createElement('div'); item.className = 'uploaded-item';
+          const info = document.createElement('div'); info.textContent = `${f.name} — ${f.kind || f.type}`;
+          const actions = document.createElement('div');
+
+          const openBtn = document.createElement('button'); openBtn.className = 'tbtn'; openBtn.textContent = 'Open';
+          openBtn.addEventListener('click', () => {
+            if (f.kind === 'html' && f.url) {
+              openUploadedHtml(f.name, f.url);
+            } else if (f.kind === 'audio' && f.url) {
+              openMusicPlayer([{name: f.name, url: f.url}]);
+            } else if (f.kind === 'image' && f.url) {
+              applyWallpaper(f.url, true);
+              flashMessage('Applied as wallpaper: ' + f.name);
+            } else if (f.kind === 'text' && f.text != null) {
+              openApp('notepad');
+              setTimeout(()=> {
+                const win = document.getElementById('app-notepad');
+                if (win) {
+                  const ta = win.querySelector('textarea');
+                  if (ta) ta.value = f.text;
+                }
+              }, 120);
+            } else {
+              flashMessage('No associated viewer for: ' + f.name);
+            }
+          });
+
+          const removeBtn = document.createElement('button'); removeBtn.className='tbtn'; removeBtn.textContent='Remove';
+          removeBtn.addEventListener('click', () => {
+            // revoke blob if exists
+            if (f.url && f.url.startsWith('blob:')) {
+              try { URL.revokeObjectURL(f.url); createdBlobUrls.delete(f.url); } catch(e){}
+            }
+            uploadedFiles.splice(idx,1);
+            renderUploaded();
+            flashMessage('Removed: ' + f.name);
+          });
+
+          actions.appendChild(openBtn);
+          actions.appendChild(removeBtn);
+          item.appendChild(info);
+          item.appendChild(actions);
+          uploadedList.appendChild(item);
+        });
+      }
+
+      // initial render
+      renderUploaded();
+      right.appendChild(uploadedList);
+
+      // refresh button to re-render (in case new uploads occur)
+      const refreshBtn = document.createElement('button'); refreshBtn.className='tbtn'; refreshBtn.textContent='Refresh';
+      refreshBtn.addEventListener('click', () => renderUploaded());
+      right.appendChild(document.createElement('div')).style.height = '8px';
+      right.appendChild(refreshBtn);
+
+      content.appendChild(left); content.appendChild(right);
+
+      // create window
+      const win = createWindow({ id: 'app-computer', title: 'My Computer', width:760, height:420, x:100, y:80, contentEl: content });
+      // apply white cursor
+      document.body.classList.add('white-cursor');
+
+      // when this window is closed, closeWindow handler will remove the cursor class
+      return win;
+    }
+
+    /* -----------------------------
+       Weather app (new)
+       - uses Open-Meteo free API: https://api.open-meteo.com/v1/forecast
+       - attempts geolocation; if denied, allows manual lat/lon input
+       ----------------------------- */
+    function openWeather() {
+      const content = document.createElement('div');
+      content.style.display = 'flex';
+      content.style.flexDirection = 'column';
+      content.style.gap = '10px';
+      content.style.height = '100%';
+
+      const hdr = document.createElement('div'); hdr.style.fontWeight='900'; hdr.style.marginBottom='6px'; hdr.textContent = 'Weather';
+      const status = document.createElement('div'); status.style.color = '#114b85'; status.style.fontWeight='800';
+      const panel = document.createElement('div'); panel.style.display='flex'; panel.style.gap='12px'; panel.style.alignItems='center';
+
+      const infoWrap = document.createElement('div'); infoWrap.style.flex='1';
+      const locationEl = document.createElement('div'); locationEl.style.fontWeight='800'; locationEl.style.marginBottom='6px';
+      const tempEl = document.createElement('div'); tempEl.style.fontSize='28px'; tempEl.style.fontWeight='900'; tempEl.style.marginBottom='6px';
+      const detailsEl = document.createElement('div'); detailsEl.style.fontSize='13px'; detailsEl.style.color='#2f6c9c';
+
+      infoWrap.appendChild(locationEl); infoWrap.appendChild(tempEl); infoWrap.appendChild(detailsEl);
+
+      const controls = document.createElement('div'); controls.style.display='flex'; controls.style.flexDirection='column'; controls.style.gap='8px';
+      const detectBtn = document.createElement('button'); detectBtn.className='tbtn'; detectBtn.textContent='Detect location';
+      const refreshBtn = document.createElement('button'); refreshBtn.className='tbtn'; refreshBtn.textContent='Refresh';
+      const manualBtn = document.createElement('button'); manualBtn.className='tbtn'; manualBtn.textContent='Manual coords';
+
+      controls.appendChild(detectBtn); controls.appendChild(refreshBtn); controls.appendChild(manualBtn);
+
+      panel.appendChild(infoWrap); panel.appendChild(controls);
+
+      content.appendChild(hdr);
+      content.appendChild(status);
+      content.appendChild(panel);
+
+      // manual coords modal (simple)
+      function askManualCoords() {
+        const ok = prompt('Enter coords as "latitude,longitude" (e.g. 40.7128,-74.0060) for manual weather lookup');
+        if (!ok) return;
+        const parts = ok.split(',').map(s => s.trim());
+        if (parts.length !== 2) { flashMessage('Invalid coords'); return; }
+        const lat = parseFloat(parts[0]); const lon = parseFloat(parts[1]);
+        if (isNaN(lat) || isNaN(lon)) { flashMessage('Invalid numeric coords'); return; }
+        fetchWeather(lat, lon);
+      }
+
+      // basic mapping of weather codes to emoji + description (Open-Meteo codes)
+      function weatherCodeToDesc(code) {
+        // simplified mapping
+        const map = {
+          0: ['☀️', 'Clear sky'],
+          1: ['🌤️','Mainly clear'],
+          2: ['⛅','Partly cloudy'],
+          3: ['☁️','Overcast'],
+          45: ['🌫️','Fog'],
+          48: ['🌫️','Depositing rime fog'],
+          51: ['🌦️','Light drizzle'],
+          53: ['🌧️','Moderate drizzle'],
+          55: ['🌧️','Dense drizzle'],
+          61: ['🌧️','Slight rain'],
+          63: ['🌧️','Moderate rain'],
+          65: ['🌧️','Heavy rain'],
+          80: ['🌦️','Rain showers'],
+          95: ['⛈️','Thunderstorm'],
+        };
+        return map[code] || ['❓','Unknown'];
+      }
+
+      async function fetchWeather(lat, lon) {
+        status.textContent = 'Fetching weather...';
+        locationEl.textContent = `Lat ${lat.toFixed(3)}, Lon ${lon.toFixed(3)}`;
+        tempEl.textContent = '';
+        detailsEl.textContent = '';
+        try {
+          const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current_weather=true`;
+          const r = await fetch(url, {cache: 'no-store'});
+          if (!r.ok) throw new Error('Network error');
+          const j = await r.json();
+          if (!j || !j.current_weather) throw new Error('No weather data');
+          const cw = j.current_weather;
+          const tempC = cw.temperature;
+          const wind = cw.windspeed;
+          const code = cw.weathercode;
+          const [icon, desc] = weatherCodeToDesc(code);
+          tempEl.textContent = `${Math.round(tempC)}°C ${icon}`;
+          detailsEl.textContent = `${desc} • Wind ${wind} km/h`;
+          status.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+          // update desktop weather badge if exists
+          const desktopWeatherBadge = document.querySelector('#desktopIcons .desktop-icon[data-app="weather"] .badge');
+          if (desktopWeatherBadge) desktopWeatherBadge.textContent = `${Math.round(tempC)}°C`;
+          return j;
+        } catch (err) {
+          status.textContent = 'Unable to fetch weather';
+          flashMessage('Unable to fetch weather: ' + (err.message || 'error'));
+          return null;
+        }
+      }
+
+      detectBtn.addEventListener('click', () => {
+        status.textContent = 'Detecting location...';
+        if (!navigator.geolocation) {
+          status.textContent = 'Geolocation not supported';
+          return;
+        }
+        navigator.geolocation.getCurrentPosition((pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          fetchWeather(lat, lon);
+        }, (err) => {
+          status.textContent = 'Location denied or unavailable';
+          flashMessage('Location access denied or unavailable');
+        }, {timeout: 8000});
+      });
+
+      refreshBtn.addEventListener('click', () => {
+        // try previous displayed coords from locationEl text
+        const txt = locationEl.textContent || '';
+        const m = txt.match(/Lat ([\d\.\-]+), Lon ([\d\.\-]+)/);
+        if (m) {
+          fetchWeather(parseFloat(m[1]), parseFloat(m[2]));
+        } else {
+          flashMessage('No cached coords — detect location or use Manual coords');
+        }
+      });
+
+      manualBtn.addEventListener('click', askManualCoords);
+
+      // initial attempt: try geolocation automatically
+      status.textContent = 'Click "Detect location" or "Manual coords"';
+      const win = createWindow({ id: 'app-weather', title: 'Weather', width:420, height:300, x:320, y:120, contentEl: content });
+      // try auto detect quietly
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          fetchWeather(pos.coords.latitude, pos.coords.longitude);
+        }, ()=>{/*ignore*/},{timeout:5000});
+      }
+      return win;
+    }
+
+    // When creating desktop icon for Weather, we'll include a small badge area to show temp
+    function createWeatherDesktopIcon() {
+      const iconHtml = `<div style="position:relative;width:72px;height:72px;display:flex;align-items:center;justify-content:center;">
+        <div style="font-size:36px;">⛅</div>
+        <div class="badge" style="position:absolute;right:-6px;bottom:-8px;background:linear-gradient(#fff,#eaf3ff);color:#073764;padding:2px 6px;border-radius:8px;font-weight:900;font-size:12px;border:1px solid rgba(0,0,0,0.06);">--°C</div>
+      </div>`;
+      createDesktopIcon({
+        id: 'icon-weather',
+        title: 'Weather',
+        iconHtml,
+        onOpen: () => openWeather()
+      });
+      // mark data-app attribute to find badge later
+      const el = document.getElementById('icon-weather');
+      if (el) el.setAttribute('data-app','weather');
+    }
+
+    /* -----------------------------
+       Lock screen functions
+       - showLockScreen(): shows overlay and captures input
+       - hideLockScreen(): hides overlay
+       - Unlock works by matching LOCK_PIN (empty string means pressing Unlock without typing will work)
+       ----------------------------- */
+    function showLockScreen() {
+      // do nothing if already visible
+      if (lockScreenEl.classList.contains('visible')) return;
+      // hide start menu & context
+      toggleStartMenu(false);
+      closeContextMenu();
+      closeAssistiveMenu();
+
+      lockInput.value = '';
+      lockCard.classList.remove('lock-shake');
+
+      lockScreenEl.classList.add('visible');
+      lockScreenEl.setAttribute('aria-hidden','false');
+      updateLockTime();
+      lockTimer = setInterval(updateLockTime, 1000);
+
+      // update displayed user and smiley (smilly buddy)
+      lockUserSpan.textContent = CURRENT_USER || 'Guest';
+      // ensure smiley visible (could be customized later)
+      if (smileyBuddy) smileyBuddy.textContent = '😊';
+
+      // optionally pause some interactive elements: blur windows visually
+      document.body.classList.add('locked');
+
+      // focus input for quick unlock
+      setTimeout(()=> lockInput.focus(), 80);
+    }
+
+    function hideLockScreen() {
+      lockScreenEl.classList.remove('visible');
+      lockScreenEl.setAttribute('aria-hidden','true');
+      if (lockTimer) { clearInterval(lockTimer); lockTimer = null; }
+      document.body.classList.remove('locked');
+    }
+
+    function attemptUnlock() {
+      const val = lockInput.value || '';
+      // If LOCK_PIN is empty string, require empty input (i.e., pressing Unlock without entering anything)
+      if (val === LOCK_PIN) {
+        hideLockScreen();
+        flashMessage('Unlocked');
+      } else {
+        // visual feedback
+        lockCard.classList.remove('lock-shake');
+        void lockCard.offsetWidth; // force reflow to restart animation
+        lockCard.classList.add('lock-shake');
+        flashMessage('Incorrect PIN');
+        lockInput.value = '';
+        lockInput.focus();
+      }
+    }
+
+    // wire unlock button + Enter key
+    lockUnlockBtn.addEventListener('click', attemptUnlock);
+    lockInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') attemptUnlock();
+      if (e.key === 'Escape') { lockInput.value = ''; }
+    });
+
+    // close lock screen with correct PIN only; ignore Escape to prevent bypass
+
+    /* -----------------------------
+       App launcher + wiring
+       ----------------------------- */
+    function openApp(name) {
+      toggleStartMenu(false);
+      const meta = CATALOG.find(c=>c.id===name);
+      if (!meta) return flashMessage('App not found: ' + name);
+      meta.run();
+    }
+
+    // Start menu pinned clicks already wire in addPinnedApp()
+    document.getElementById('allAppsList')?.addEventListener('click', (e) => {
+      const row = e.target.closest('.app-row');
+      if (row && row.dataset.app) { openApp(row.dataset.app); }
+    });
+
+    // wiring right-side entries
+    document.querySelectorAll('.start-right .entry').forEach(el => {
+      el.addEventListener('click', () => {
+        const act = el.dataset.action;
+        if (act === 'control') openApp('control');
+        else if (act === 'appmarket') openApp('appmarket');
+        else if (act === 'camera') openApp('camera');
+        else if (act === 'lock') showLockScreen();
+        else flashMessage(act);
+        toggleStartMenu(false);
+      });
+    });
+
+    // pinned persistence & initialization
+    function init() {
+      const savedWP = localStorage.getItem(WP_KEY);
+      if (savedWP) document.documentElement.style.setProperty('--wallpaper', `url("${savedWP}")`);
+      loadPinned();
+      buildAllApps();
+      // Hide assistive touch by default (user asked "assistive touch is gone")
+      try { localStorage.setItem(ASSISTIVE_KEY, '1'); } catch(e){}
+      // create assistive touch UI (it will be hidden because of the flag)
+      createAssistiveTouch();
+      // show desktop note informing about IE/fullscreen + assistive gone
+      showDesktopNote();
+
+      // create desktop icons (including Weather)
+      createWeatherDesktopIcon();
+    }
+
+    // Prevent image dragging
+    document.querySelectorAll('img').forEach(i => i.draggable = false);
+
+    // Accessibility
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Meta') toggleStartMenu(true);
+      if (e.key === 'ContextMenu') openContextMenu(120,120);
+    });
+
+    // Expose sim object for console testing
+    window.sim = { openApp, addPinnedApp, createWindow, closeWindow, applyWallpaper, openUploadedHtml, openMusicPlayer, uploadedFiles, showLockScreen, hideLockScreen };
+
+    /* -----------------------------
+       Desktop note (shown when desktop appears)
+       ----------------------------- */
+    function showDesktopNote() {
+      // avoid duplicates
+      if (document.getElementById('desktop-note')) return;
+      const note = document.createElement('div');
+      note.id = 'desktop-note';
+      note.className = 'desktop-note';
+      const txt = document.createElement('div');
+      txt.className = 'note-text';
+      txt.innerHTML = `Note: When you open Internet Explorer it may be cut off. To use it without the cutoff, enter fullscreen in Internet Explorer. Also, the Assistive Touch is gone. You can re-enable it with "Show Assistive Touch". Uploaded HTML files can be run directly; uploaded audio files open in the Music Player.`;
+      const actions = document.createElement('div');
+      actions.className = 'note-actions';
+      const btnGot = document.createElement('button');
+      btnGot.className = 'btn';
+      btnGot.textContent = 'Got it';
+      const btnShowAssistive = document.createElement('button');
+      btnShowAssistive.className = 'btn';
+      btnShowAssistive.textContent = 'Show Assistive Touch';
+      actions.appendChild(btnShowAssistive);
+      actions.appendChild(btnGot);
+      note.appendChild(txt);
+      note.appendChild(actions);
+      document.body.appendChild(note);
+
+      btnGot.addEventListener('click', () => note.remove());
+      btnShowAssistive.addEventListener('click', () => {
+        // restore assistive touch (clear hidden flag and show UI)
+        try { localStorage.setItem(ASSISTIVE_KEY, '0'); } catch(e){}
+        if (window.showAssistiveTouch) window.showAssistiveTouch();
+        else createAssistiveTouch();
+        note.remove();
+        flashMessage('Assistive Touch restored');
+      });
+
+      // auto-dismiss after 12s (optional)
+      setTimeout(() => {
+        if (note.parentElement) note.remove();
+      }, 12000);
+    }
+
+    /* -----------------------------
+       Assistive Touch implementation (movable + persisted position)
+       ----------------------------- */
+    function createAssistiveTouch() {
+      // don't recreate
+      if (document.getElementById('assistive-wrap')) return;
+
+      const hidden = localStorage.getItem(ASSISTIVE_KEY) === '1';
+      const savedPosRaw = localStorage.getItem(ASSISTIVE_POS_KEY);
+      let savedPos = null;
+      try { savedPos = savedPosRaw ? JSON.parse(savedPosRaw) : null; } catch (e) { savedPos = null; }
+
+      // wrapper holds absolute fixed position (we store left/top)
+      const wrap = document.createElement('div');
+      wrap.id = 'assistive-wrap';
+      wrap.className = 'assistive-wrap';
+      // default to bottom-right if no saved position
+      const defaultRight = 16;
+      const defaultBottom = 92;
+
+      if (savedPos && typeof savedPos.x === 'number' && typeof savedPos.y === 'number') {
+        wrap.style.left = savedPos.x + 'px';
+        wrap.style.top = savedPos.y + 'px';
+      } else {
+        // place from bottom-right default
+        const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+        const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        wrap.style.left = (vw - defaultRight - 56) + 'px';
+        wrap.style.top = (vh - defaultBottom - 56) + 'px';
+      }
+
+      // make sure wrapper isn't off-screen after resize
+      function clampWrapToViewport() {
+        const rect = wrap.getBoundingClientRect();
+        const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+        const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        let left = rect.left, top = rect.top;
+        const pad = 8;
+        if (left < pad) left = pad;
+        if (top < pad) top = pad;
+        if (left + rect.width > vw - pad) left = vw - rect.width - pad;
+        if (top + rect.height > vh - pad) top = vh - rect.height - pad;
+        wrap.style.left = left + 'px';
+        wrap.style.top = top + 'px';
+        savePos();
+      }
+
+      // the round assistive button
+      const assistive = document.createElement('div');
+      assistive.className = 'assistive';
+      assistive.id = 'assistive';
+      assistive.setAttribute('role','button');
+      assistive.setAttribute('title','Assistive Touch');
+      assistive.setAttribute('tabindex','0');
+
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      assistive.appendChild(dot);
+
+      // menu
+      const menu = document.createElement('div');
+      menu.className = 'assistive-menu';
+      menu.id = 'assistive-menu';
+      const btnFullscreen = document.createElement('button');
+      btnFullscreen.textContent = 'Enter Fullscreen';
+      const btnHide = document.createElement('button');
+      btnHide.textContent = 'Hide Assistive Touch';
+      const btnHelp = document.createElement('button');
+      btnHelp.textContent = 'Open App Market';
+      const btnLock = document.createElement('button');
+      btnLock.textContent = 'Lock Screen';
+      menu.appendChild(btnFullscreen);
+      menu.appendChild(btnHide);
+      menu.appendChild(btnHelp);
+      menu.appendChild(btnLock);
+
+      // compose wrapper content
+      wrap.appendChild(menu);
+      wrap.appendChild(assistive);
+      assistiveRoot.appendChild(wrap);
+
+      // state
+      let menuVisible = false;
+      let isDragging = false;
+      let startX = 0, startY = 0, origLeft = 0, origTop = 0;
+      let moved = false;
+
+      function openAssistiveMenu() {
+        menuVisible = true;
+        menu.classList.add('visible');
+      }
+      function closeAssistiveMenu() {
+        menuVisible = false;
+        menu.classList.remove('visible');
+      }
+
+      // Save position into localStorage (left/top numbers)
+      function savePos() {
+        try {
+          const rect = wrap.getBoundingClientRect();
+          localStorage.setItem(ASSISTIVE_POS_KEY, JSON.stringify({ x: Math.round(rect.left), y: Math.round(rect.top) }));
+        } catch (e) { /* ignore */ }
+      }
+
+      // pointer handlers for dragging
+      assistive.addEventListener('pointerdown', (ev) => {
+        if (ev.target.tagName === 'BUTTON') return;
+        isDragging = true;
+        moved = false;
+        startX = ev.clientX;
+        startY = ev.clientY;
+        const rect = wrap.getBoundingClientRect();
+        origLeft = rect.left;
+        origTop = rect.top;
+        try { assistive.setPointerCapture(ev.pointerId); } catch (e) {}
+        // hide menu while dragging
+        closeAssistiveMenu();
+      });
+
+      window.addEventListener('pointermove', (ev) => {
+        if (!isDragging) return;
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+        let newLeft = origLeft + dx;
+        let newTop = origTop + dy;
+        // clamp so it doesn't go fully off-screen
+        const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+        const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        const pad = 8;
+        const w = wrap.offsetWidth || 56;
+        const h = wrap.offsetHeight || 56;
+        if (newLeft < pad) newLeft = pad;
+        if (newTop < pad) newTop = pad;
+        if (newLeft + w > vw - pad) newLeft = vw - w - pad;
+        if (newTop + h > vh - pad) newTop = vh - h - pad;
+        wrap.style.left = newLeft + 'px';
+        wrap.style.top = newTop + 'px';
+      });
+
+      window.addEventListener('pointerup', (ev) => {
+        if (!isDragging) return;
+        isDragging = false;
+        try { assistive.releasePointerCapture(ev.pointerId); } catch (e) {}
+        if (!moved) {
+          if (!menuVisible) openAssistiveMenu(); else closeAssistiveMenu();
+        } else {
+          savePos();
+        }
+      });
+
+      // Also support keyboard toggling of menu
+      assistive.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          if (!menuVisible) openAssistiveMenu(); else closeAssistiveMenu();
+        }
+      });
+
+      // fullscreen toggle
+      async function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          try {
+            await document.documentElement.requestFullscreen();
+            btnFullscreen.textContent = 'Exit Fullscreen';
+          } catch (err) {
+            flashMessage('Unable to enter fullscreen');
+          }
+        } else {
+          try {
+            await document.exitFullscreen();
+            btnFullscreen.textContent = 'Enter Fullscreen';
+          } catch (err) {
+            flashMessage('Unable to exit fullscreen');
+          }
+        }
+        closeAssistiveMenu();
+      }
+      btnFullscreen.addEventListener('click', () => toggleFullscreen());
+
+      // hide assistive touch
+      btnHide.addEventListener('click', () => {
+        assistiveRoot.style.display = 'none';
+        try { localStorage.setItem(ASSISTIVE_KEY, '1'); } catch(e){}
+        flashMessage('Assistive Touch hidden. Right-click desktop > Upload from computer or Refresh to interact.');
+      });
+
+      // quick action: open app market
+      btnHelp.addEventListener('click', () => {
+        openApp('appmarket');
+        closeAssistiveMenu();
+      });
+
+      // quick action: lock screen
+      btnLock.addEventListener('click', () => {
+        showLockScreen();
+        closeAssistiveMenu();
+      });
+
+      // show/hide on startup based on localStorage
+      if (hidden) {
+        assistiveRoot.style.display = 'none';
+      } else {
+        assistiveRoot.style.display = '';
+      }
+
+      // Expose programmatic controls
+      window.showAssistiveTouch = function() {
+        try { localStorage.setItem(ASSISTIVE_KEY, '0'); } catch(e){}
+        assistiveRoot.style.display = '';
+        // clamp position just in case
+        setTimeout(() => {
+          const w = document.getElementById('assistive-wrap');
+          if (w) {
+            const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+            const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+            const rect = w.getBoundingClientRect();
+            if (rect.left < 8 || rect.top < 8 || rect.left + rect.width > vw || rect.top + rect.height > vh) {
+              // reset to bottom-right
+              w.style.left = (vw - 16 - 56) + 'px';
+              w.style.top = (vh - 92 - 56) + 'px';
+            }
+          }
+        }, 10);
+      };
+      window.hideAssistiveTouch = function() {
+        try { localStorage.setItem(ASSISTIVE_KEY, '1'); } catch(e){}
+        assistiveRoot.style.display = 'none';
+      };
+      window.toggleAssistiveMenu = function() {
+        if (menuVisible) closeAssistiveMenu(); else openAssistiveMenu();
+      };
+
+      // Ensure wrap stays visible on viewport resize
+      window.addEventListener('resize', () => {
+        clampWrapToViewport();
+      });
+
+      // helper to close from global clicks
+      window.closeAssistiveMenu = closeAssistiveMenu;
+    }
+
+    /* -----------------------------
+       Run init after boot ends
+       ----------------------------- */
+
+    // Run boot on first load — then init and show desktop, but immediately show lock screen on finish
+    window.startBoot({
+      duration: 6000,
+      playSound: true,
+      bootText: 'Starting Glossy XP',
+      onFinish: () => {
+        init();
+        // show lock overlay immediately so user must "enter pass" (Unlock) to continue
+        showLockScreen();
+      }
+    });
+  </script>
+</body>
+</html>
